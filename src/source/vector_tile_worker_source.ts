@@ -1,6 +1,6 @@
 import {PbfReader} from 'pbf';
 import {VectorTile} from '@mapbox/vector-tile';
-import {fromVectorTileJs, type VectorTileLayerLike, type VectorTileLike} from '@maplibre/vt-pbf';
+import {fromVectorTileJs, type VectorTileLike} from '@maplibre/vt-pbf';
 import {type ExpiryData, getArrayBuffer} from '../util/ajax.ts';
 import {WorkerTile} from './worker_tile.ts';
 import {WorkerTileState} from './worker_tile_state.ts';
@@ -17,7 +17,6 @@ import type {
     WorkerTileResult
 } from '../source/worker_source.ts';
 import type {IActor} from '../util/actor.ts';
-import type {StyleLayer} from '../style/style_layer.ts';
 import type {StyleLayerIndex} from '../style/style_layer_index.ts';
 
 export type LoadVectorTileResult = {
@@ -35,7 +34,6 @@ export class VectorTileWorkerSource implements WorkerSource {
     availableImages: string[];
     tileState: WorkerTileState;
     overzoomedTileResultCache: BoundedLRUCache<string, LoadVectorTileResult>;
-    private _slicedSourceLayers: Set<string>;
 
     constructor(actor: IActor, layerIndex: StyleLayerIndex, availableImages: string[]) {
         this.actor = actor;
@@ -43,7 +41,6 @@ export class VectorTileWorkerSource implements WorkerSource {
         this.availableImages = availableImages;
         this.tileState = new WorkerTileState();
         this.overzoomedTileResultCache = new BoundedLRUCache<string, LoadVectorTileResult>(1000);
-        this._slicedSourceLayers = new Set();
     }
 
     /**
@@ -184,24 +181,19 @@ export class VectorTileWorkerSource implements WorkerSource {
      * @returns the overzoomed tile and its raw data
      */
     private _getOverzoomTile(params: WorkerTileParameters, maxZoomVectorTile: VectorTileLike): LoadVectorTileResult {
-        const {tileID, source, overzoomParameters} = params;
+        const {tileID, overzoomParameters} = params;
         const {maxZoomTileID} = overzoomParameters;
 
-        const cachedOverzoomTile = this._getCachedSlice(params);
+        const cacheKey = `${maxZoomTileID.key}_${tileID.key}_${params.request?.url}`;
+        const cachedOverzoomTile = this.overzoomedTileResultCache.get(cacheKey);
 
         if (cachedOverzoomTile) {
             return cachedOverzoomTile;
         }
 
         const overzoomedVectorTile = new VectorTileOverzoomed();
-        const layerFamilies: Record<string, StyleLayer[][]> = this.layerIndex.familiesBySource[source];
 
-        for (const sourceLayerId in layerFamilies) {
-            const sourceLayer: VectorTileLayerLike = maxZoomVectorTile.layers[sourceLayerId];
-            if (!sourceLayer) {
-                continue;
-            }
-
+        for (const sourceLayer of Object.values(maxZoomVectorTile.layers)) {
             const slicedTileLayer = sliceVectorTileLayer(sourceLayer, maxZoomTileID, tileID.canonical);
             if (slicedTileLayer.length > 0) {
                 overzoomedVectorTile.addLayer(slicedTileLayer);
@@ -211,19 +203,9 @@ export class VectorTileWorkerSource implements WorkerSource {
             vectorTile: overzoomedVectorTile,
             rawData: fromVectorTileJs(overzoomedVectorTile).buffer
         };
-        this.overzoomedTileResultCache.set(overzoomCacheKey(params), overzoomedVectorTileResult);
+        this.overzoomedTileResultCache.set(cacheKey, overzoomedVectorTileResult);
 
         return overzoomedVectorTileResult;
-    }
-
-    private _getCachedSlice(params: WorkerTileParameters): LoadVectorTileResult | undefined {
-        const sourceLayers = Object.keys(this.layerIndex.familiesBySource[params.source] ?? {});
-        if (sourceLayers.some(sourceLayer => !this._slicedSourceLayers.has(sourceLayer))) {
-            this.overzoomedTileResultCache.clear();
-        }
-        this._slicedSourceLayers = new Set(sourceLayers);
-
-        return this.overzoomedTileResultCache.get(overzoomCacheKey(params));
     }
 
     /**
@@ -237,9 +219,6 @@ export class VectorTileWorkerSource implements WorkerSource {
         // If there was no vector tile data on the initial load, don't try to reparse the tile.
         if (!workerTile.vectorTile) {
             return;
-        }
-        if (params.overzoomParameters && this._getCachedSlice(params)?.vectorTile !== workerTile.vectorTile) {
-            return this.loadTile({...params, etag: undefined});
         }
 
         workerTile.showCollisionBoxes = params.showCollisionBoxes;
@@ -260,9 +239,4 @@ export class VectorTileWorkerSource implements WorkerSource {
     async removeTile(params: TileParameters): Promise<void> {
         this.tileState.removeLoaded(params.uid);
     }
-}
-
-function overzoomCacheKey({tileID, overzoomParameters}: WorkerTileParameters): string {
-    const {maxZoomTileID, overzoomRequest} = overzoomParameters;
-    return `${maxZoomTileID.key}_${tileID.key}_${overzoomRequest.url}`;
 }
