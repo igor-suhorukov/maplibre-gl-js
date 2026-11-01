@@ -29,6 +29,7 @@ describe('vector tile worker source', () => {
     afterEach(() => {
         server.restore();
         vi.clearAllMocks();
+        vi.restoreAllMocks();
     });
     test('VectorTileWorkerSource.abortTile aborts pending request', async () => {
         const source = new VectorTileWorkerSource(actor, new StyleLayerIndex(), []);
@@ -413,7 +414,7 @@ describe('vector tile worker source', () => {
     });
 
     test('VectorTileWorkerSource loadTile uses _getOverzoomTile when overzoomParameters is provided', async () => {
-        const source = new VectorTileWorkerSource({} as any, new StyleLayerIndex(), []);
+        const source = new VectorTileWorkerSource({} as any, new StyleLayerIndex([]), []);
         const mockVectorTile = {layers: {}} as any;
 
         source.loadVectorTile = vi.fn().mockReturnValue({
@@ -448,7 +449,7 @@ describe('vector tile worker source', () => {
     });
 
     test('VectorTileWorkerSource uses mvt encoding for overzoomed mlt tiles', async () => {
-        const source = new VectorTileWorkerSource(actor, new StyleLayerIndex(), []);
+        const source = new VectorTileWorkerSource(actor, new StyleLayerIndex([]), []);
         const mockVectorTile = {layers: {}} as any;
 
         source.loadVectorTile = vi.fn().mockReturnValue({
@@ -484,8 +485,6 @@ describe('vector tile worker source', () => {
     });
 
     test('VectorTileWorkerSource.reloadTile of an overzoomed tile draws a source layer added after it loaded, without a new request', async () => {
-        // Earlier tests in this file leave WorkerTile.prototype.parse stubbed.
-        vi.restoreAllMocks();
         const rawTileData = new Uint8Array(fs.readFileSync(path.join(__dirname, '/../../test/unit/assets/mbsv5-6-18-23.vector.pbf'))).buffer;
         const layerIndex = new StyleLayerIndex([{id: 'borders', type: 'line', source: 'source', 'source-layer': 'admin'}]);
         const source = new VectorTileWorkerSource(actor, layerIndex, []);
